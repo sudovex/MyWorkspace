@@ -115,10 +115,35 @@ walker. The intro is shorter on return visits — clear the
 | Script            | Purpose                                    |
 | ----------------- | ------------------------------------------ |
 | `dev`             | Start the dev server                       |
-| `build` / `start` | Production build & serve                   |
+| `build`           | Static export into `out/`                  |
+| `start`           | Serve `out/` locally (after `build`)       |
 | `lint`            | ESLint (flat config, Next + TS + Prettier) |
 | `typecheck`       | `tsc --noEmit`                             |
 | `format`          | Prettier write                             |
+
+## Deploying (GitHub Pages)
+
+The site is a **static export** (`output: 'export'` in `next.config.ts`):
+`npm run build` writes plain files to `out/`, which any static host can serve.
+
+`.github/workflows/deploy.yml` builds and publishes it to GitHub Pages on
+every push to `main` (and from **Actions → Deploy to GitHub Pages → Run
+workflow**). One-time setup: **Settings → Pages → Build and deployment →
+Source: GitHub Actions**. The site then lives at
+`https://sudovex.github.io/MyWorkspace/`.
+
+The workflow reads the sub-path (`/MyWorkspace`) from Pages and passes it to
+the build as `NEXT_PUBLIC_BASE_PATH`; files from `public/` must go through
+`asset()` (`src/lib/asset.ts`) so they pick it up. With a custom domain set in
+Settings → Pages the sub-path becomes empty automatically.
+
+To check an export locally under the same sub-path:
+
+```bash
+NEXT_PUBLIC_BASE_PATH=/MyWorkspace npm run build
+mkdir -p /tmp/pages && ln -sfn "$PWD/out" /tmp/pages/MyWorkspace
+npx serve /tmp/pages   # open http://localhost:3000/MyWorkspace/
+```
 
 ## Environment
 

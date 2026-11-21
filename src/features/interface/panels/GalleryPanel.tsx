@@ -26,6 +26,7 @@ import { ALBUMS, albumItems, type GalleryItem } from '@/content';
 import { useExperienceStore } from '@/stores/experienceStore';
 import { GALLERY_ALBUMS, type GalleryAlbum } from '@/types/experience';
 import { cn } from '@/lib/utils';
+import { asset } from '@/lib/asset';
 import { PanelShell } from './PanelShell';
 import { PlaceholderArt } from './PlaceholderArt';
 import { balancedMasonry } from './masonry';
@@ -74,7 +75,7 @@ function Frame({
   if (item.src) {
     return (
       <Image
-        src={item.src}
+        src={asset(item.src)}
         alt={item.title}
         fill
         sizes={sizes}

@@ -2,6 +2,23 @@
 
 All notable changes per milestone.
 
+## GitHub Pages deployment (Nov 2026)
+
+### Added
+- **`.github/workflows/deploy.yml`** — builds the site and publishes it to
+  GitHub Pages on every push to `main` (or on demand from the Actions tab).
+  The existing `ci.yml` only verified the build; it never deployed anything,
+  which is why switching Pages to "GitHub Actions" showed no site.
+- **Static export**: `next.config.ts` now sets `output: 'export'`,
+  `images.unoptimized`, `trailingSlash` and `basePath` (from
+  `NEXT_PUBLIC_BASE_PATH`, which the workflow reads from Pages: `/MyWorkspace`).
+- `src/lib/asset.ts` — prefixes the base path onto `public/` files; the
+  gallery photos use it (they 404'd under a sub-path otherwise).
+
+### Changed
+- `npm start` serves the exported `out/` folder (`next start` does not work
+  with a static export).
+
 ## Real gym photos (Nov 2026)
 
 ### Changed

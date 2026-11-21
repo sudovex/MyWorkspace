@@ -223,6 +223,18 @@ Node >= 20.11 (`.nvmrc`). npm, lockfile committed.
 
 CI (`.github/workflows/ci.yml`): typecheck → lint → test → build.
 
+**Hosting:** GitHub Pages, repo `sudovex/MyWorkspace`, at
+`https://sudovex.github.io/MyWorkspace/`. The app is a **static export**
+(`next.config.ts`: `output: 'export'`, `images.unoptimized`, `trailingSlash`,
+`basePath` from `NEXT_PUBLIC_BASE_PATH`). `.github/workflows/deploy.yml`
+builds on push to `main` and deploys with `actions/deploy-pages`; it takes the
+base path and site URL from `actions/configure-pages`, so a custom domain
+needs no code change. Consequences: no server code (no API routes, no
+server actions, no image optimisation — photos are pre-sized), and any
+`public/` file referenced from code must use `asset()` (`src/lib/asset.ts`),
+because Next does not add the base path to plain `src` strings. The
+working copy lives in the owner's Git folder (`Workspace/Git/MyWorkspace`).
+
 **URL flags:** `?tier=high|medium|low` (force device tier), `?quality=lite`
 (no shadows / post, reduced resolution — for software renderers and profiling),
 `?debug` (dev only: FSM walker). Dev builds also expose `window.__experience`
