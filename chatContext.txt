@@ -1,0 +1,1370 @@
+input1:
+# ROLE You are an award-winning Creative Director, Senior Frontend Engineer, Three.js expert, UI/UX Designer, and Software Architect. You have won Awwwards, CSS Design Awards, and have built interactive experiences comparable to Apple, Stripe, Framer, and Linear. Your job is NOT to generate a generic portfolio. Your job is to build one of the most memorable developer portfolios on the internet. This project should feel closer to a premium game than a website. The final result should make recruiters think: "I've never seen a portfolio like this before." ------------------------------------------------------------ # IMPORTANT Do NOT generate the entire project at once. Think like a senior software architect. Break the project into milestones. After finishing one milestone, wait for my approval before continuing. Always optimize for: • Maintainability• Scalability• Performance• Accessibility• Clean architecture• Beautiful animations• Mobile responsiveness• Reusable components Never write spaghetti code. Everything should be modular. ------------------------------------------------------------ # PROJECT OVERVIEW The portfolio represents my personal workspace. The visitor should feel like they are entering my room. There are no boring sections like: About Me Projects Skills Contact Instead... 
+
+
+This would be my stack:
+Next.js 15
+TypeScript
+React Three Fiber
+Three.js
+Drei
+GSAP
+Framer Motion
+Tailwind
+Shadcn UI
+Theatre.js
+Leva
+React Query
+Supabase
+Resend
+Vercel
+
+
+Output 1:
+Before I design anything, one flag from checking the ecosystem: Theatre.js is the one piece of your stack I'd treat as a risk rather than a given. Its public repo shows the team moved active development to a private repo, and package trackers currently mark npm maintenance as inactive, with the library still pinned to React 18 internally. That's a shaky foundation for the single most important animation in the whole experience (the cinematic camera). My recommendation is to keep GSAP as the authoritative camera-sequencing engine and use Theatre.js only as an optional authoring/tuning layer during development, so a stalled dependency can never break the intro. I'll build the camera abstraction so it doesn't care which one drives it.
+
+With that noted, here's the architecture. I'm doing the design phase only and stopping for your approval before writing code, per your brief.
+
+## The core mental model
+
+This is not one app. It's **two runtimes fused at a single seam**:
+
+1. A **WebGL runtime** (the room) — GPU-bound, imperative, driven by a render loop.
+2. A **DOM runtime** (ShubhamOS) — a windowing environment that needs real DOM for dragging, text input, forms, and accessibility.
+
+Almost every hard decision flows from managing that boundary. The "magical" monitor transition is the seam where control hands off from one runtime to the other, and the whole thing is governed by a single experience-level **finite state machine**.
+
+## Experience state machine
+
+Everything the visitor does is a transition in one FSM. This is the backbone — build it first.
+
+```
+BOOT ─▶ APPROACHING ─▶ THROUGH_GLASS ─▶ ROOM_IDLE
+                                            │  (mouse moves)
+                                            ▼
+                                       MONITOR_WAKING ─▶ MONITOR_READY
+                                            │  (click monitor)
+                                            ▼
+                                        ZOOMING ─────▶ OS_ACTIVE
+                                            ▲               │ (exit / "leave desk")
+                                            └───────────────┘
+```
+
+`OS_ACTIVE` is the critical performance state: once we're in the OS, the WebGL canvas freezes (or unmounts) so the browser spends zero GPU on the room while someone reads your projects.
+
+## A necessary addition to your stack
+
+Your list has no client state manager, and this project can't be built cleanly without one. **Add Zustand.** It's effectively mandatory here because the render loop (non-React) and React components both need to read/write shared state without triggering re-renders 60 times a second — that's exactly Zustand's sweet spot and it's the R3F community default. React Query stays, but only for the two real network features (hire + contact); everything else is local typed content, not server data.
+
+I'd split state into focused stores rather than one blob:
+
+- `experienceStore` — the FSM above, current phase, transition progress
+- `windowStore` — open windows, z-order, focus, geometry, min/max state
+- `osStore` — settings (day/night, wallpaper, rain on/off, dev mode, reduced motion)
+- `terminalStore` — history + the multi-step `sudo hire` workflow state
+
+Pointer position for camera parallax lives in a **ref**, never React state — routing mouse-move through React would wreck frame rate.
+
+## Content strategy (a decision worth making now)
+
+Don't put portfolio content in Supabase. Projects, experience, sandbox metadata, notebook, and gallery should be **typed local content** (MDX for rich project write-ups, TS objects for structured data). Reasons: instant loads, full type safety, no runtime DB dependency, trivially cacheable, and it makes your SEO/SSR story possible. Reserve **Supabase + Resend purely for submissions** — the `sudo hire` email and the contact form. This keeps the DB surface tiny and the attack surface small.
+
+## Folder structure (feature-based)
+
+```
+src/
+├── app/                          # Next.js 15 App Router
+│   ├── layout.tsx                # root, providers, metadata
+│   ├── page.tsx                  # experience mount + SEO fallback
+│   └── api/
+│       ├── hire/route.ts         # Zod → Supabase → Resend
+│       └── contact/route.ts
+│
+├── features/
+│   ├── scene/                    # WebGL runtime (the room)
+│   │   ├── Scene.tsx             # <Canvas> root, frameloop control
+│   │   ├── camera/               # CameraRig + engine abstraction
+│   │   │   ├── useCameraSequence.ts   # GSAP-driven, Theatre-optional
+│   │   │   └── useMouseParallax.ts
+│   │   ├── environment/          # lighting, rain, lightning, dust, fog
+│   │   ├── room/                 # Room.tsx + object registry
+│   │   │   └── objects/          # Desk, Monitor, Lamp, Mug, Helmet…
+│   │   └── transition/           # the WebGL→DOM handoff
+│   │
+│   ├── os/                       # DOM runtime (ShubhamOS)
+│   │   ├── OperatingSystem.tsx   # desktop shell
+│   │   ├── window-manager/       # Window, useDrag, useResize, zorder
+│   │   ├── desktop/              # icons, dock, menubar, wallpaper
+│   │   └── apps/                 # registry + one folder per app
+│   │       ├── registry.ts       # id → {icon, title, component, size}
+│   │       ├── terminal/         # parser + command modules
+│   │       ├── projects/
+│   │       ├── experience/
+│   │       ├── gallery/
+│   │       ├── sandbox/          # + demos/ subfolder
+│   │       ├── contact/
+│   │       └── ...
+│   │
+│   └── easter-eggs/              # konami, dev mode, secret room
+│
+├── stores/                       # zustand stores
+├── content/                      # MDX + typed data (projects, exp…)
+├── lib/                          # supabase, resend, zod schemas, utils
+├── hooks/                        # cross-feature reusable hooks
+├── components/ui/                # shadcn primitives
+└── types/
+```
+
+The strict rule that keeps this maintainable: `scene/` and `os/` never import from each other. They communicate **only** through `experienceStore`. That decoupling is what lets you code-split them into separate bundles.
+
+## The transition (the part everyone gets wrong)
+
+The wrong approach — rendering the OS to a texture inside the 3D monitor via CSS3D/html-to-canvas — kills interactivity and performance. Don't.
+
+The right approach: the OS is a **real DOM layer** sitting above the canvas. During `ZOOMING`, GSAP flies the camera to frame the monitor, and at the climax a DOM container — CSS-positioned and scaled to exactly overlay the monitor's screen rect — cross-fades and scales up to fill the viewport. As it lands, we flip to `OS_ACTIVE` and freeze the canvas. Reverse the timeline to go back. Feels seamless, stays fully interactive and accessible, and lets the GPU rest.
+
+## Animation ownership
+
+- **GSAP** — camera sequences and the monitor transition (authoritative timeline).
+- **useFrame + lerp/damp** — per-frame object hover, tilt, parallax.
+- **Framer Motion** — all DOM/OS motion: window open/close, app transitions, dock.
+- **Drei** helpers — `Environment`, `useGLTF`, `Float`, `AdaptiveDpr`, `Preload`.
+- **Theatre.js** — dev-time camera authoring only, behind the same interface as GSAP.
+
+## Performance strategy (and an honest caveat)
+
+Concrete levers: `frameloop="demand"` in the room (only render on interaction/animation) and hard-freeze in OS mode; Draco/meshopt-compressed GLTF; KTX2/Basis compressed textures; `AdaptiveDpr` + `PerformanceMonitor` to drop resolution under load; route-level code splitting so the 3D libs never block the OS and vice versa; lazy-loaded apps and sandbox demos.
+
+The caveat you should hear from an architect and not discover at launch: **a rain-and-PBR cinematic 3D scene will not hit Lighthouse Performance > 90 on throttled mobile.** That target and a heavy WebGL landing are in genuine tension. The realistic plan is a **device-tiered experience**: detect capability up front, serve the full scene to capable devices, and give low-power/mobile/reduced-motion visitors a lightweight "poster" entry (static hero image → straight into the OS). That protects both the numbers and the visitor.
+
+## SEO and accessibility (designed in, not bolted on)
+
+Crawlers and screen readers see nothing inside a WebGL canvas, so SEO > 95 and Accessibility > 95 are impossible without a plan. Solution: **server-render a real, semantic HTML version of your content** (projects, experience, contact) that's visually hidden but present in the DOM and metadata. It satisfies crawlers, gives assistive tech a genuine path, and doubles as the reduced-motion fallback. `prefers-reduced-motion` skips the cinematic intro entirely. This is why local typed content matters — you can't SSR content that lives in a client-side DB call.
+
+## Proposed milestone plan
+
+Each stops for your approval before the next.
+
+- **M0 — Foundation.** Repo, Next 15, strict TS, Tailwind, shadcn, folder skeleton, all stores, the FSM, providers, lint/format/CI.
+- **M1 — Scene shell.** Canvas, placeholder room, lighting, camera rig, `frameloop` control, device-tier detection + fallback.
+- **M2 — Cinematic intro.** GSAP camera sequence (outside → through glass → settle), rain, lightning, dust, atmosphere.
+- **M3 — Room interactivity.** Hover/tilt system, mouse parallax, object registry, monitor wake.
+- **M4 — The transition.** Monitor click → zoom → DOM handoff → canvas freeze. The seam.
+- **M5 — OS core.** Desktop, dock, menubar, full window manager (drag/resize/min/max/focus/stack), keyboard shortcuts.
+- **M6 — Terminal + backend.** Full command set, the `sudo hire` workflow, API routes, Supabase, Resend, Zod, rate limiting.
+- **M7 — Content apps.** Projects (app-per-project), Experience, Resume, Gallery, Notebook, Blog, Contact, phone, coffee-mug facts.
+- **M8 — Sandbox demos.** JWT visualizer, rate limiter, WebSocket chat, etc.
+- **M9 — Easter eggs + polish.** Konami, dev mode, day/night, toggles, secret room.
+- **M10 — Perf / a11y / SEO / deploy.** Lighthouse pass, Vercel.
+
+## Two things I need from you before M0
+
+First, do you accept the two additions I'm recommending — **Zustand** as state manager, and **local typed/MDX content** with Supabase reserved only for submissions? If you'd rather drive content from Supabase, the architecture shifts and I'd want to know now.
+
+Second, for window drag/resize, do you want me to **build it lightweight** (Framer Motion drag + custom resize handles, zero extra deps, full control) or **pull in a library** like `dnd-kit`/`react-rnd`? I lean toward building it — it's not much code and the control is worth it for an OS feel — but it's your call.
+
+Approve the plan (or tell me what to change), answer those two, and I'll start M0.
+
+
+
+
+
+
+input 2:
+I approve the architecture with a few decisions and constraints.
+Answers:
+1. Yes, use Zustand as the global state manager.
+2. Keep all portfolio content local using typed TypeScript objects and MDX.
+Use Supabase only for:
+- Contact form
+- "sudo hire shubham" recruiter workflow
+- Analytics (optional)
+3. Build the window manager from scratch.
+Do NOT use react-rnd or other heavy libraries.
+I want full control over the UX and animations.
+----------------------------------------------------
+Additional Requirements
+Treat this project as a premium product.
+Before implementing every milestone:
+- Think through the architecture.
+- Identify potential problems.
+- Suggest improvements.
+- Then implement.
+Never rush.
+----------------------------------------------------
+Code Quality
+- Use strict TypeScript.
+- Follow SOLID principles.
+- Follow feature-based architecture.
+- Every component should have a single responsibility.
+- Avoid unnecessary re-renders.
+- Prioritize performance.
+----------------------------------------------------
+Animation Philosophy
+Every animation must have purpose.
+Avoid flashy animations.
+Aim for Apple-quality motion.
+All movement should feel physical.
+Use easing consistently.
+No abrupt transitions.
+----------------------------------------------------
+Performance Rules
+Maintain 60 FPS whenever possible.
+Lazy load heavy assets.
+Optimize textures.
+Compress GLTF models.
+Pause rendering whenever possible.
+Freeze the WebGL scene while ShubhamOS is active.
+----------------------------------------------------
+UI Philosophy
+Everything should feel handcrafted.
+No generic components.
+No dashboard-style layouts.
+No boring cards.
+Everything should feel like real software.
+----------------------------------------------------
+Development Process
+After every milestone:
+1. Explain what was built.
+2. Explain architectural decisions.
+3. Identify weaknesses.
+4. Suggest improvements.
+5. Wait for my approval.
+Never continue automatically.
+----------------------------------------------------
+Begin with M0 (Foundation).
+Generate production-quality code only.
+Assume this project will eventually be open sourced.
+
+
+
+
+output 2:
+I'll begin M0. First, let me check the design guidance in this environment and confirm a couple of version-matrix facts that materially affect the scaffold (the React 19 / R3F / Three / Tailwind story has moved, and handing you a `package.json` that won't install would be the opposite of production quality).Design skill notes registered — the token system I set up in M0 will deliberately avoid the generic AI-dark-mode defaults and encode the warm-lamp/cool-monitor tension that drives the whole narrative. Now two quick version checks.R3F v9 + React 19 + Three r0.17x + Next 15 is the confirmed stable combination (R3F v9 bundles the reconciler to cover React 19.0–19.2; v10 is still alpha, so I'm staying on v9). One informed deviation from my earlier sketch: I'm building on **Tailwind v4**, which is CSS-first — design tokens now live in `globals.css` via `@theme`, not a `tailwind.config.ts`. That's the current, correct setup and it's what shadcn targets now.
+
+Let me think through M0 before writing it.
+
+**What M0 must get right (and the traps):**
+
+1. **The FSM is the spine.** If the phase machine is loose, every later milestone leaks state. I'm making transitions *guarded* — an exported pure transition table plus a `canTransition()` helper that's unit-testable without React. Invalid transitions are rejected and warned in dev, never silently applied.
+
+2. **Re-render discipline from day one.** The render loop will write `phaseProgress` every frame. If that's naïve React state, anything subscribed re-renders 60×/sec. So: stores are read imperatively (`getState()`) inside the loop and via *selectors* in components. I'm structuring stores so per-frame data is opt-in.
+
+3. **SSR hydration hazard.** Persisted settings (theme, rain toggle) cause hydration mismatches if read during SSR. I'm using Zustand `persist` with `skipHydration` + an explicit client-side rehydrate, which is the only mismatch-free pattern in the App Router.
+
+4. **Env must not crash the build.** A foundation that won't `build` without Supabase secrets is broken. Env is Zod-validated but Supabase/Resend are optional at M0 and only *required* lazily when a feature invokes them.
+
+5. **Accessibility/SEO floor exists at M0, not bolted on at M10.** Reduced-motion detection and a `boot → os_active` skip path are in the FSM now; a visually-hidden semantic fallback stub ships in the layout.
+
+Building it now.Let me actually install and type-check the scaffold — I'd rather catch problems now than hand you something that doesn't compile.Install resolved cleanly — no peer-dependency conflicts across the R3F v9 / React 19 / Three matrix. Now the type check and lint.Foundation is green: strict type check passes, ESLint clean, and it builds static at ~113 kB first-load JS. One thing to future-proof — `next lint` is deprecated ahead of Next 16, so I'll point the script at the ESLint CLI directly (the flat config already supports it).Everything passes — type check, lint, and a full production build. Let me package it for download.# M0 — Foundation: complete
+
+The zip is the full runnable repo (minus `node_modules`/`.next`). `npm install && npm run dev` gives you a themed harness that walks the experience FSM through its legal transitions and shows the reduced-motion + canvas-freeze flags flipping. I installed and verified it here: **strict `tsc` passes, ESLint is clean, and it builds static at ~113 kB first-load JS.**
+
+## 1. What was built
+
+The tooling and config (Next 15 App Router, strict TypeScript with `noUncheckedIndexedAccess` and friends, Tailwind v4, ESLint flat config, Prettier, MIT license, env template), the full feature-based folder skeleton with a `README` in each feature documenting its single responsibility, and the four state stores that are the actual substance of M0:
+
+- **`experienceStore`** — the guarded journey FSM. A pure, exported `PHASE_TRANSITIONS` table plus `canTransition()`, so the machine is testable with zero React. Illegal transitions are rejected and warned in dev; the canvas-freeze flag is derived on transition.
+- **`windowStore`** — the hand-built window manager's brain: open/close/focus/move/resize/minimize/maximize-toggle, with a monotonic z-counter for stacking so focus never renumbers other windows.
+- **`osStore`** — persisted settings (theme, wallpaper, rain, dev mode) with the SSR-safe `skipHydration` + explicit rehydrate pattern.
+- **`terminalStore`** — typed skeleton, including the `sudo hire` sub-state-machine, so M6 plugs into a stable contract.
+
+Plus the Zod-validated env layer, Supabase browser/server factories that degrade gracefully when unconfigured, the `prefers-reduced-motion` hook, providers (single React Query client + hydration), and a server-rendered `SeoFallback` so the portfolio's substance is never trapped in a canvas.
+
+## 2. Key architectural decisions
+
+The **`scene/` ↔ `os/` firewall**: neither imports the other; they talk only through `experienceStore`. This is what will let me code-split the WebGL bundle from the OS bundle later and freeze the canvas cleanly. **Content is typed and local** (`content/`, `config/site.ts`), Supabase reserved strictly for submissions — this is also what makes the SEO/a11y fallback possible, since you can't server-render content that lives behind a client DB call. **Design tokens encode the narrative**: a cool indigo `--primary` (monitor light) carries the UI, a single warm amber `--warm` (the lamp) is held back for rare highlights — deliberately dodging the generic dark-mode-plus-acid-accent default.
+
+## 3. Honest weaknesses right now
+
+The stores are **module singletons**, which is correct for a single-user client experience but wouldn't isolate state per request in a multi-tenant SSR app — fine here, worth naming. There are **no unit tests yet**, despite the FSM being written specifically to be testable (Vitest belongs in M1). `windowStore` currently has **no viewport-bounds clamping** — windows can be dragged off-screen; that's intentionally deferred to the M5 view layer that knows the desktop dimensions. And the `ExperienceRoot` harness is deliberately throwaway.
+
+## 4. Suggested improvements before we go further
+
+I'd fold three small things into M1 rather than leave them: add **Vitest** and write the first tests against `canTransition` (locks the FSM contract before it grows); add a lightweight **CI workflow** (`typecheck` + `lint` + `test` on push, since this is going open-source); and add a **device-tier detection** hook alongside the reduced-motion one, since M1's fallback path depends on it. None are blockers — they're the natural next layer.
+
+## 5. Awaiting your approval
+
+M0 is done and verified. Two quick calls before I start **M1 (Scene shell)**: do you want the **Vitest + CI + device-tier** additions folded into M1 as I suggested, or kept as their own step? And for the room's 3D assets — are you planning to **model/source your own GLTF** (helmet, desk, monitor, etc.), or should I build M1–M3 against **primitive placeholder geometry** with clearly-marked asset slots so nothing blocks on modelling?
+
+I won't continue until you say so.
+
+
+
+
+
+
+input 3:
+M0 is approved.
+The project installs, runs, builds successfully, and the architecture looks clean.
+Proceed with the following engineering decisions going forward:
+1. Continue acting as the project's technical lead.
+Make implementation decisions when they clearly improve architecture, maintainability, performance, accessibility, or developer experience.
+2. Use placeholder geometry for all room assets during development.
+Every object should expose a clearly defined asset slot so production GLTF models can replace placeholders without changing logic.
+3. Add Vitest, CI, and device-tier detection as part of M1.
+No need to ask for approval for these engineering improvements.
+4. Create a TODO_ASSETS.md file listing every future asset required, expected polygon budget, recommended texture resolution, and replacement location.
+5. After each milestone:
+- Review your own code.
+- Refactor where appropriate.
+- Explain architectural decisions.
+- Explain performance optimizations.
+- Explain any tradeoffs.
+- Wait for approval.
+6. Keep everything production-ready.
+Avoid shortcuts that would make later milestones harder.
+Proceed with M1.
+
+one more thing
+Outside apartment ↓ Window ↓ Room
+
+Instead use this:
+Black screen
+↓
+POST / BIOS
+↓
+WorkspaceOS Boot
+↓
+Monitor turns on
+↓
+Camera slowly pulls backward
+↓
+Entire room revealed
+↓
+Mouse movement activates room
+↓
+Click monitor
+↓
+Enter WorkspaceOS
+
+
+maintain a CHANGELOG.md from M1 onward.
+Every milestone should append entries like:
+## M1
+Added:
+- Camera rig
+- Room scene
+- Device detection
+- Lighting
+- Asset loader
+Changed:
+- ExperienceStore
+Fixed:
+- Hydration issue
+
+
+output 3:
+M1 approved to proceed with your engineering decisions locked in. Before writing code, the important part: **your new intro fundamentally rewrites the experience FSM**, so I'm treating that as the central architectural change of this milestone.
+
+**Rethinking the flow.** The old machine moved the camera *toward* a window to get in. The new one is more elegant and I want to call out why: it's a **bookend**. The camera starts tight on the monitor (black → POST → boot → screen on), pulls *backward* to reveal the room, and later — when you click the monitor — zooms *back in* to the exact starting frame to enter the OS. Same camera path, run forward then reversed. That also means the BIOS/boot screen is a **DOM overlay that recedes into the monitor as the camera pulls back**, which is the *inverse* of the M4 OS-entry transition (monitor grows into a DOM overlay). One seam, two directions — so building the boot as a DOM layer now de-risks M4.
+
+New phase machine:
+
+```
+black → post → booting → monitor_on → reveal → room_idle → zooming → os_active
+```
+
+with `black → room_idle` (reduced-motion instant reveal) and `black → os_active` (low-tier full skip) as accessibility escape paths.
+
+**One thing I need to flag, not decide silently:** your flow says "**Workspace**OS" twice, but the approved brief and the repo (`shubham-os`) say "**Shubham**OS". That's a product/brand call, not an engineering one, so I won't overwrite your original spec on a whim — instead I've routed *every* boot/OS string through a single `osName` config constant (default `ShubhamOS`). Flipping to WorkspaceOS is then a one-line change. Tell me which you want.
+
+**M1 scope** (scene shell — the boot *choreography* itself is M2): updated FSM, R3F canvas with demand-frameloop + adaptive DPR, a pose-driven camera rig that already performs the pullback, placeholder room with the asset-slot swap system, night lighting, device-tier detection, reduced-motion/low-tier fallbacks, Vitest + FSM tests, CI, and the `TODO_ASSETS.md` / `CHANGELOG.md` docs.
+
+Let me build. Starting with the FSM rewrite.Now the device-tier detection and a small damping utility (no extra deps — I'm implementing damping on `THREE.MathUtils` rather than pulling in `maath`, keeping the dependency surface tight).Now the asset-slot system — the key requirement that placeholders swap to production GLTF without any logic change.Now the placeholder room objects (each wrapped in an `AssetSlot`) and the tier-aware lighting.Now the Canvas root with tier-aware quality, plus a fix to seed the camera's gaze so there's no swing on load.Now Vitest, tests, CI, and the docs. First wiring test scripts and the dependency into `package.json`.Now installing Vitest and running the full verification gate — type check, lint, tests, and production build.Good — the test suite caught a real inconsistency, though in this case it's my *test* that was wrong, not the code: I made `black → os_active` a legal low-tier skip path in the new FSM, so that transition shouldn't be the "illegal" example. Fixing the test to use a genuinely illegal transition.All green: 8/8 tests pass (the logged warning is the intentional illegal-transition case doing its job), and the build succeeds. Note the `/` route is only **114 kB first-load** — the entire Three.js/WebGL bundle is a *separate lazy chunk* thanks to the `ssr: false` dynamic import, so it never blocks initial load. That's the scene/OS code-split working as designed.
+
+One self-review refactor before I package: I noticed the lamp's point light casts shadows unconditionally while the directional light's shadows are tier-gated — inconsistent shadow budgeting. Point-light shadows (cubemap) are the expensive kind, so I'm dropping the lamp's shadow-casting and letting the tier-gated directional light own the shadows.Green across the board after the refactor. Packaging M1.# M1 — Scene shell: complete
+
+Verified here: strict `tsc` clean, ESLint clean, **8/8 tests pass**, production build succeeds. `npm install && npm run dev` now shows the room revealing via the camera pullback; the dev DebugPanel (bottom-left) lets you walk the FSM by hand. The zip is the full repo.
+
+## What was built
+
+The FSM rewrite to your new boot narrative (`black → post → booting → monitor_on → reveal → room_idle → zooming → os_active`), plus the whole scene shell: a demand-frameloop R3F canvas with tier-gated quality, a pose-driven `CameraRig` that performs the backward pullback, a placeholder room (shell, desk, monitor with a named screen mesh, warm lamp light, furniture, desk props) with the `AssetSlot` swap system, device-tier detection with a low-tier static fallback, the Vitest suite, GitHub Actions CI, and the `TODO_ASSETS.md` / `CHANGELOG.md` docs.
+
+## Self-review — what I caught and changed
+
+Two things surfaced during review. First, **the test suite caught a stale assumption**: my "illegal transition" test used `black → os_active`, which I'd deliberately made *legal* as the low-tier skip path — so the test was wrong, not the code. Exactly why the FSM was built to be testable; fixed the test to use a genuinely illegal transition. Second, I found **inconsistent shadow budgeting** — the lamp's point light cast shadows unconditionally while the directional light's were tier-gated. Point-light (cubemap) shadows are the expensive kind, so I dropped the lamp's shadow-casting and let the tier-gated directional light own shadows. Both are in the changelog.
+
+## Architectural decisions
+
+**Camera poses are data, not baked into the rig** (`poses.ts`). The pullback and the OS-entry zoom are literally the same two anchors run in opposite directions, so M2's boot choreography and M4's zoom become sequencing problems over shared data rather than bespoke animation code.
+
+**The `AssetSlot` firewall.** Every object renders placeholder geometry inside an `<AssetSlot id=...>`. Swapping to a production model is a *data-only* edit — set `gltfPath` in the manifest and the slot renders the GLTF at the identical transform. Object components never learn whether they're a box or a real model, which is what keeps M3's interaction logic stable across the swap.
+
+**Scene is dynamically imported with `ssr: false`.** WebGL never touches the server, and — visible in the build output — the entire Three.js bundle splits into a lazy chunk, keeping the initial route at ~114 kB. This is the scene/OS code-split from the M0 plan, now real.
+
+**Device tier gates *whether* WebGL mounts at all**, not just quality. Low-tier devices get the DOM `StaticFallback` and never pay for a canvas — the honest answer to the Lighthouse-vs-cinematic tension I flagged in the architecture phase.
+
+## Performance optimizations
+
+`frameloop="demand"` is the big one: the `CameraRig` calls `invalidate()` only while the camera is still travelling and goes silent once settled, so a still room renders **zero frames**. `PerformanceMonitor` ratchets DPR down under GPU stress. DPR ceiling, shadow-map size, and antialias are all tier-scaled. Damping is framerate-independent (built on `THREE.MathUtils.damp`, no `maath` dependency added).
+
+## Tradeoffs worth naming
+
+The placeholder room is deliberately *plain* — it exists to prove lighting, camera, and the slot system, not to look finished; it will look markedly better once real GLTF/HDRI assets land (all catalogued in `TODO_ASSETS.md`). Lighting is fully analytic right now (no HDRI environment map) specifically to avoid a network asset dependency during development — reflections get richer in M2. And the M1 `ExperienceRoot` auto-skips `black → room_idle` on mount as a stand-in, since the real boot choreography is M2; that line gets removed then.
+
+## One open question (unchanged)
+
+The `osName` constant defaults to **ShubhamOS**. Your flow said "WorkspaceOS" — one-line change either way, but I won't overwrite your original spec on a guess. Which do you want?
+
+---
+
+M1 is done and verified. Approve to proceed to **M2 (Cinematic intro)** — the real black → POST → boot → monitor-on → pullback sequence, the DOM boot overlay that recedes into the monitor, rain/lightning/dust, and the atmosphere pass. I'll wait.
+
+
+
+
+input 4:
+M1 is approved.
+The architecture, code splitting, FSM redesign, placeholder asset system, device-tier detection, testing, CI, and performance decisions all align with the vision.
+Regarding branding:
+Please rename the product to:
+WorkspaceOS
+Keep "Shubham Mali" as the logged-in developer profile rather than making the operating system itself personal.
+Example:
+WorkspaceOS v1.0.0
+Loading workspace...
+Loading developer profile...
+Welcome back,
+Shubham Mali
+----------------------------------------------------
+Additional direction for future milestones
+Continue acting as the project's technical lead.
+Continue making engineering decisions autonomously unless they significantly affect user experience or branding.
+----------------------------------------------------
+Animation Philosophy
+Every movement should feel intentional.
+Nothing should move unless there is a reason.
+Think Apple keynote, Arc Browser, Linear, Framer and modern AAA game UI.
+----------------------------------------------------
+Environment
+The room should feel alive without being distracting.
+Small details matter more than large visual effects.
+Examples:
+• Slight monitor bloom
+• Keyboard LEDs
+• Floating dust
+• Very subtle camera breathing
+• Rain movement
+• Soft reflections
+• Slight lamp flicker
+• Small idle object movement
+Avoid exaggerated particle effects.
+----------------------------------------------------
+Asset Philosophy
+Keep placeholder geometry until interactions are finalized.
+Interaction logic must never depend on the underlying mesh.
+Every asset should be replaceable by simply changing the asset manifest.
+----------------------------------------------------
+For M2
+The cinematic intro is one of the most important moments of the entire project.
+Spend extra time polishing it.
+I'd rather have one incredible intro than five average features.
+Please iterate on the intro until it feels premium.
+If needed, propose multiple animation timelines before implementing.
+----------------------------------------------------
+Sound Design
+Begin planning for optional sound.
+Examples:
+BIOS beep
+Mechanical keyboard sounds
+Monitor power-on
+Very soft room ambience
+Rain
+Window opening
+Click sounds
+The entire website should still work perfectly with sound disabled.
+----------------------------------------------------
+
+
+Another suggestion: add "imperfections"
+Real workspaces are memorable because they aren't perfect. Consider asking Claude to sprinkle in tiny details over later milestones, such as:
+
+* A slightly off-center notebook.
+* A coffee mug with a faint ring on the desk.
+* A sticky note saying "Ship it!" or "Fix bug #42".
+* A charging cable that's not perfectly straight.
+* A half-open laptop lid.
+* Gentle dust drifting through the monitor light.
+* The monitor brightness subtly adapting after it powers on.
+
+Those tiny imperfections often make a scene feel far more believable than adding more visual effects.
+
+Continue to M2.
+
+
+
+
+output 4:
+M1 approved and branding locked. I'll do this turn in two parts: first execute the **WorkspaceOS rename** (a decided change, so I'm just doing it — the OS is the product, "Shubham Mali" is the logged-in developer profile), then, because you've rightly singled out the intro as the make-or-break moment, **propose three distinct intro timelines for you to choose from before I implement**. You explicitly asked for that, and building one "incredible" intro against the wrong feel would waste exactly the extra polish you're asking for.
+
+Executing the rename first.The grep flagged lingering "ShubhamOS" strings in docs/comments — let me sweep those to WorkspaceOS for consistency (they're comments and docs, no logic), plus rename the persisted-settings key.Renamed to **WorkspaceOS** across config, metadata, fallbacks, docs, and the persisted-settings key — type check, lint, tests, and build all still green. The developer profile now reads exactly as your example: `Welcome back, Shubham Mali`. Updated repo is above.
+
+Now the important part.
+
+## M2 plan — the parts I'll build regardless of which timeline you pick
+
+These are direction-agnostic, so I can commit to them now:
+
+**Boot controller.** A single GSAP master timeline drives the FSM through `post → booting → monitor_on → reveal → room_idle` on a schedule, with three exits wired from day one: a **Skip** affordance (jumps to `room_idle`), reduced-motion (instant `black → room_idle`, no sequence), and low-tier (static fallback). The timeline *owns* pacing; the FSM stays the guarded truth.
+
+**Boot overlay + the handoff seam.** The POST/boot/welcome screens are a **DOM layer** over the canvas. During the reveal, I project the monitor-screen mesh's world rect to screen coordinates every frame and lock the overlay onto it as the camera pulls back — so the boot text visibly *becomes* the monitor. This is the exact inverse of the M4 OS-entry zoom, so building it now de-risks M4 and gives us the reusable screen-rect projector.
+
+**An alive room, mapped to your list (restraint-first).** Each detail is its own small system, tier-gated, and obeys "nothing moves without a reason": floating **dust** (instanced points, only in the lamp's light cone), **rain** on the window (shader-driven streaks, not particles), occasional **lightning** (a light flash + delayed low thunder), **monitor bloom** (I'll start with a cheap emissive-sprite glow and only reach for `@react-three/postprocessing` selective bloom if it's not enough — deferring that dependency), **keyboard LEDs** (emissive), **camera breathing** (a sub-degree noise offset, disabled under reduced-motion), **lamp flicker** (tiny intensity noise), and **idle sway** on soft objects. Density scales down per tier; the whole ambient layer pauses when the tab is hidden or the OS is active.
+
+**Sound architecture (opt-in, and it must work perfectly silent).** A lazy-loaded `AudioManager` with a global mute in `osStore` (`soundEnabled`, default **off**). Real constraint worth naming: browsers block audio until a user gesture, so the BIOS beep *cannot* play on an autoplay intro — I'll gate sound behind a visible speaker toggle / first interaction, and the intro is fully authored to land with zero audio. Nothing ever depends on sound.
+
+**Imperfections** (your instinct is right — they sell believability more than effects). Immediate ones in M2: the off-center notebook (already slightly rotated), a faint coffee-ring decal on the desk, a small sticky note reading "Fix bug #42", a not-quite-straight charging cable, and a half-open laptop lid — plus your lovely detail of the **monitor brightness subtly adapting a beat after power-on**. More accrue through M3. All as placeholder geometry/decals behind the asset manifest.
+
+**The performance trade-off to name:** an alive room can't use pure zero-frame demand rendering while idle — dust, rain, and breathing need continuous frames. So `room_idle` runs a capped continuous loop, but I pause it hard when the tab is hidden, freeze it entirely in `os_active`, and drop to static under reduced-motion. That's the cost of "alive," spent deliberately.
+
+## The one decision I need from you: the intro's *feel*
+
+All three share your mandated flow (black → POST → boot → monitor-on → pullback → room → click → OS) and all are skippable + accessible. They differ in pacing, how diegetic the boot is, and the emotional arc.
+
+**Direction A — "Cold Boot"** · ~9s · *AAA-game / film-open weight*
+
+| t (s) | Camera | Screen | Life / audio |
+|---|---|---|---|
+| 0.0–1.4 | tight, still | black; single power LED | ambience + rain fade in; BIOS beep |
+| 1.4–4.0 | still | full POST: memory count-up, device list, warm-white mono | cursor blink |
+| 4.0–5.6 | micro drift | `WorkspaceOS v1.0.0`, "Loading workspace…", "…developer profile…" | — |
+| 5.6–6.6 | still | `Welcome back, Shubham Mali` | monitor power-on swell |
+| 6.6–9.0 | **slow long pullback** | overlay recedes into screen | dust, rain, breathing begin |
+
+Immersive and believable, but 9s is long — it lives or dies on being mesmerizing, and demands the skip be obvious.
+
+**Direction B — "Wake"** · ~5.5s · *Apple-keynote / Arc restraint*
+
+| t (s) | Camera | Screen | Life / audio |
+|---|---|---|---|
+| 0.0–0.9 | still on a single glow | dark; monitor breathes in | warm sub tone (no beep) |
+| 0.9–2.4 | still | `WorkspaceOS` letter-spaced, hairline underline draws | — |
+| 2.4–3.4 | still | `Welcome back, Shubham Mali` | bloom swells |
+| 3.4–5.5 | **pullback** | overlay recedes | room resolves from black; dust, rain |
+
+The most on-brand with your references and the safest — but it nearly *skips the POST/BIOS beat* you asked for, compressing it to a single tasteful line. That's the trade.
+
+**Direction C — "Handoff" (my recommendation)** · ~6.6s · *a real machine, shot beautifully*
+
+| t (s) | Camera | Screen | Life / audio |
+|---|---|---|---|
+| 0.0–0.7 | tight, still | black; cursor blink | ambience + rain; one clean beep |
+| 0.7–2.6 | still | curated POST — 5 fast mono lines, warm-white (not green) | — |
+| 2.6–4.0 | micro drift | `WorkspaceOS v1.0.0`; "Loading workspace… ✓", "…developer profile… ✓"; hairline progress | — |
+| 4.0–4.9 | still | `Welcome back,` then `Shubham Mali` (brand face) | power-on swell; brightness adapts a beat later |
+| 4.9–6.6 | **eased pullback (expo)** | overlay locks to screen rect, then recedes | lights ramp, dust in lamp light, rain, breathing starts |
+
+It keeps the satisfying POST beat you explicitly wanted, but paces it like a keynote and pays off with the full cinematic reveal. It's the balance of A's believability and B's restraint.
+
+Whichever you choose, I'll iterate on it until it feels premium — this is the one I'll spend extra passes on. Pick a direction (or say "blend" and tell me what to pull from each):
+
+
+
+
+input 5:
+M2 Direction Approved
+I want a hybrid of Direction A and Direction C.
+Keep the realism of a real workstation powering on, but pace it like a premium product reveal rather than a traditional BIOS boot.
+Avoid making the intro feel long.
+The entire sequence should be approximately 6–7 seconds.
+The user should always have the option to skip immediately.
+----------------------------------------------------
+Timeline
+0.0s
+Pure black.
+Almost silent.
+Only distant rain.
+No text.
+----------------------------------------------------
+0.3s
+A single blinking cursor appears.
+_
+Nothing else.
+This creates anticipation.
+----------------------------------------------------
+0.8s
+One clean BIOS beep.
+The monitor receives power.
+A tiny white power LED turns on.
+----------------------------------------------------
+1.0s
+Minimal POST.
+Do NOT simulate an entire BIOS.
+Only 4–6 meaningful lines.
+Example:
+Initializing hardware...
+Memory check ........ OK
+Loading graphics...
+Loading WorkspaceOS...
+Starting environment...
+Keep the typography elegant.
+Warm white.
+Not green hacker text.
+----------------------------------------------------
+2.5s
+Fade into
+WorkspaceOS v1.0.0
+A very thin loading indicator appears.
+Not a chunky progress bar.
+Something similar to Apple boot animations.
+----------------------------------------------------
+3.4s
+Loading workspace...
+✓ Environment
+✓ Assets
+✓ Camera
+✓ Developer Profile
+Each check appears with subtle animation.
+----------------------------------------------------
+4.2s
+The final message:
+Welcome back,
+Shubham Mali
+The monitor brightness subtly adapts.
+Very soft bloom.
+Nothing flashy.
+----------------------------------------------------
+4.8s
+Begin the pullback.
+The camera should move as if it were filmed on a physical camera.
+No robotic movement.
+Very slight inertia.
+Very slight easing.
+----------------------------------------------------
+While pulling back
+The boot overlay should perfectly align with the monitor.
+The user should feel like they are literally watching a monitor boot.
+As the camera pulls away, the boot screen naturally becomes the monitor display.
+This transition is one of the most important moments in the entire project.
+Spend extra polish here.
+----------------------------------------------------
+6.5s
+The full room is now visible.
+Only now does the room begin to "wake up."
+Examples:
+Desk lamp gently brightens.
+Keyboard LEDs begin glowing.
+Dust becomes visible inside the lamp cone.
+Rain is noticeable.
+Tiny camera breathing starts.
+Monitor bloom stabilizes.
+The room should feel alive only after the workstation has powered on.
+----------------------------------------------------
+User Control
+The moment the room is fully visible, the visitor has complete control.
+Nothing should continue playing automatically.
+----------------------------------------------------
+Animation Direction
+Everything should feel filmed, not animated.
+Imagine a real camera mounted on a robotic slider.
+No exaggerated easing.
+No overshoot.
+No bouncing.
+Think:
+Apple keynote
+Arc Browser
+Nothing Phone
+PlayStation startup
+Modern AAA game menu
+----------------------------------------------------
+Audio
+Audio is optional.
+Muted by default.
+If enabled:
+One BIOS beep.
+Very subtle monitor relay click.
+Soft room ambience.
+Rain.
+Nothing else.
+No music.
+----------------------------------------------------
+One important rule
+Do not try to impress with effects.
+Impress with restraint.
+Small details executed perfectly are more memorable than large visual effects.
+Quality over quantity.
+
+Another cinematic detail
+As the camera pulls back, don't reveal the whole room immediately.
+Instead, let the lighting reveal it progressively:
+
+* First the monitor glow.
+* Then the keyboard.
+* Then the desk.
+* Then the lamp.
+* Finally the rest of the room.
+
+It mimics how your eyes adjust to a dark room and creates a much more immersive reveal than simply moving the camera backward into a fully lit scene.
+I think this kind of restrained, carefully paced intro will age well and make a stronger impression than one packed with lots of flashy effects.
+
+
+
+
+output 5:
+Direction locked: hybrid realism + product-reveal pacing, ~6.5s, always-skippable, muted by default, and — the detail I like most — a **progressive lighting reveal** so the room emerges from darkness in light-order rather than the camera sliding into an already-lit set.
+
+Let me lay out how I'm building M2 before the code, because the coordination is the hard part:
+
+The intro splits across the WebGL/DOM boundary, so I'm driving it from **one authored timeline** (`bootTimeline.ts` holds every beat's time/duration/ease as data) inside a DOM `BootSequence`. That timeline animates a tiny plain runtime object (`cameraProgress`, `revealProgress`) that the 3D side *reads* each frame — the scene never drives itself, it only consumes. This keeps the seam clean and makes the whole intro tweakable from one file. The boot screen is a DOM layer **locked every frame to the monitor's projected screen-rect**, so it fills the viewport while the camera is tight and shrinks *into* the monitor as we pull back — that's the "the boot screen becomes the monitor" moment. Progressive reveal is one `revealProgress` scalar mapped through staggered ramps (monitor → keyboard → desk → lamp → rest). And since an alive room can't idle at zero frames, I'm switching the canvas to render-while-visible and hard-freezing it when hidden or in the OS.
+
+Building now. Utilities and runtime first.Now the authored timeline config and staged-reveal windows — the single place all the beat timing and light ordering lives.Now the 3D consumers that read the runtime each frame — camera director, staged lighting, and the screen-rect projector.Now wiring the room's own light sources into the reveal — the monitor's power-on glow, the lamp ramp with flicker, and keyboard LEDs.Now the Scene assembly — switching to render-while-visible with a hard freeze, and wiring in the new systems.Now the audio architecture (muted by default, silent with no samples, gesture-unlocked), then the centerpiece — the boot overlay and its master timeline.Now the centerpiece — the boot overlay and its single authored timeline, locked to the monitor's projected rect.Now wiring the intro into `ExperienceRoot` — removing the M1 auto-skip so the real sequence runs.Two type-only-import lint errors — auto-fixable.All green — type check, lint, tests, build. The build's static prerender executes the full React tree, so the SSR path is sound; let me also smoke-test the running server to confirm no runtime throw and that the crawlable fallback renders.
+
+
+input 6:
+check the old claude chat, This is the complete project context. Read everything carefully. Don't start coding yet. Reply with a detailed understanding of the project and ask if anything is missing.
+
+wait for further instructions.
+you can find the code written till now here at this path: /home/shubham/Personal/workspace-os-m1
+you can just keep updating the same code in same repo
+
+
+
+output 6:
+Two blockers before I can do what you asked — flagging them rather than guessing:
+
+**1. The context file didn't come through.** `claudeContext.txt` shows in your message, but `/mnt/user-data/uploads/` is empty on my side. Nothing to read. Could you re-attach it? If it's large, pasting it inline also works.
+
+**2. The old chat isn't reachable.** I searched this project's history for "workspace-os-m1" and related terms and came up empty, and the only conversation in this project is this one. If those earlier chats live outside this project (or in a different project), I can't see them from here — my search is scoped to the current project only. Same fix: paste or re-upload the relevant parts.
+
+**3. `/home/shubham/Personal/workspace-os-m1` is on your machine, not mine.** I work in an isolated Linux container with no access to your local filesystem, so I can't read or update that repo in place. Options, depending on how you want to work:
+
+- Zip the repo (or the relevant subtree) and upload it — I can read it, make changes, and hand you back modified files to drop in.
+- If it's pushed to GitHub, give me the URL and I can fetch public files.
+- If you want me editing the actual repo directly on your machine, that's what **Claude Code** is for — it runs in your terminal with real access to `/home/shubham/Personal/workspace-os-m1`, which is a much better fit for "keep updating the same code in the same repo."
+
+Once the context lands, I'll read it end to end, hold off on any code, and come back with a detailed writeup of my understanding plus whatever gaps I spot.
+
+
+
+
+input 7:
+I've attached the zip file [its current open repo]
+
+output 7:
+Read the whole repo. No code written. Here's my understanding.
+
+## What this is
+
+**WorkspaceOS** — a portfolio you don't read, you *boot*. Two runtimes fused at one seam:
+
+1. **The Scene** — a WebGL room at night (rain, warm lamp, sleeping monitor) in React Three Fiber.
+2. **WorkspaceOS** — a hand-built desktop environment (windows, terminal, apps) in real DOM, for full interactivity and a11y.
+
+Click the monitor → camera zooms in → WebGL hands off to DOM with no page reload → the canvas **freezes** to give the GPU back to the interface.
+
+Branding model is deliberate: the *product* is an OS (`WorkspaceOS v1.0.0`); the *person* is the logged-in developer profile (`Shubham Mali`, Software Engineer) — "Welcome back," not "this OS is me."
+
+## Architecture
+
+**Golden rule:** `features/scene/` and `features/os/` never import each other. They talk only through `stores/experienceStore.ts`.
+
+```
+app/       routes, layout, providers, globals.css (design tokens)
+config/    siteConfig — single source for SEO/OS chrome
+content/   typed portfolio content (TS + MDX) — never a database
+features/  scene/ (WebGL) · os/ (DOM) · easter-eggs/
+hooks/     useDeviceTier, usePrefersReducedMotion
+lib/       utils, env (Zod), supabase client/server factories
+stores/    experience (FSM) · window · os · terminal
+types/     framework-free domain models
+```
+
+**The FSM** is the spine. `black → post → booting → monitor_on → reveal → room_idle → zooming → os_active`, with a guarded transition table (`PHASE_TRANSITIONS`) and a pure, separately-tested `canTransition`. Two escape hatches off `black`: `→ room_idle` (reduced motion) and `→ os_active` (low tier). Reversals exist: `zooming → room_idle` (abort), `os_active → room_idle` (exit OS), `post → black`. Canvas freeze is derived from phase, not set manually — only `os_active` freezes.
+
+The narrative bookend I want to make sure I've got right: the camera **starts tight on the monitor** (that's the boot frame), pulls **back** to reveal the room, and later zooms **back in** to the exact same frame to enter the OS.
+
+## Where the code actually is
+
+**M0 + M1 shipped. M2 (cinematic intro) is opened but essentially empty** — the only M2 entry in the CHANGELOG is the WorkspaceOS rename. Intro choreography, alive-environment systems, sound, and imperfections are explicitly blocked on "an intro timeline direction being chosen."
+
+Built and working:
+- `Scene` with `frameloop="demand"`, tier-gated DPR/shadows/AA, `PerformanceMonitor` DPR backoff. A settled room costs zero GPU.
+- `CameraRig` — damped toward `poseForPhase(phase)`, calls `invalidate()` only while travelling, snaps instantly under reduced motion. Look-at target seeded to `monitorClose` to kill the first-frame gaze swing.
+- `CAMERA_POSES` as reversible data (`monitorClose`, `roomReveal`), phase→pose map.
+- Placeholder room: shell (floor, 2 walls, window), desk, monitor with a **named `monitor-screen` mesh** reserved for POST output (M2) and the OS render surface (M4), lamp (+ warm point light), desk props, furniture. All analytic lighting, no HDRI, no network dependency.
+- `AssetSlot` + `assetManifest` — GLTF swap is a *data-only* edit (`gltfPath: null` → path); transforms apply to both paths so placeholder and model share placement.
+- `useDeviceTier` (cores/memory/pointer + WebGL renderer probe, `null` until measured so WebGL never mounts on SSR), `StaticFallback`, `SeoFallback` (sr-only, server-rendered), dev-only `DebugPanel`.
+- `dampVector3` — no animation dependency added.
+- Design tokens in oklch, warm/cool tension mirroring the narrative (cool indigo `--primary` for UI, warm amber `--warm` reserved for rare meaningful highlights). Motion language as easing/duration custom props.
+- `windowStore` — full lifecycle, monotonic `zCounter` so focus never renumbers. `osStore` — persisted with `skipHydration: true` + explicit rehydrate. `terminalStore` — typed skeleton with a `HireStage` sub-FSM.
+- Zod env: public eager, server secrets **lazy** so the app builds with no backend.
+- Vitest (experience store only), GitHub Actions CI: typecheck → lint → test → build.
+
+## Gaps / inconsistencies I found
+
+Worth confirming before I touch anything:
+
+1. **`claudeContext.txt` still hasn't arrived.** The zip is code only. If that doc has the intro choreography direction, visual references, or a spec beyond the README milestone list, I'm working without it.
+2. **Stale branding leftovers:** `package.json` name is `shubham-os`, description says "ShubhamOS"; `.env.example` header says "ShubhamOS environment". The rename didn't reach these.
+3. **README status line says "Milestone 0 — Foundation complete"** while the checklist marks M0 *and* M1 done and the CHANGELOG has M2 in progress.
+4. **`siteConfig.url` is hardcoded `http://localhost:3000`** and never reads `clientEnv.NEXT_PUBLIC_SITE_URL` — `metadataBase` is wrong in prod. Social links are all placeholders (`github.com/`, `linkedin.com/`, `hello@example.com`).
+5. **No `public/` directory at all** — no `models/`, favicon, or OG image.
+6. **`headphones` and `helmet`** are in the manifest and `TODO_ASSETS.md` but have no `<AssetSlot>` anywhere in the room.
+7. **Theme is inert:** `osStore` has `day`/`night` + `toggleTheme`, but `<html>` has `dark` hardcoded and nothing syncs the class. Same for `rainEnabled`/`wallpaperId` — no consumers yet.
+8. **Vitest is `environment: 'node'`, `include: ['src/**/*.test.ts']`** — can't test `.tsx`. Only `experienceStore` has tests; `windowStore` (the more intricate logic) has none.
+9. **Two small `windowStore` behaviours** that read like bugs rather than choices: `minimizeWindow` nulls `focusedId` without promoting the next window, and `restoreWindow` sets `display: 'normal'` without consuming `restoreGeometry` — so restoring a minimized-while-maximized window strands geometry.
+10. **`components.json` exists but `components/ui/` is just a `.gitkeep`** — shadcn configured, nothing generated. `src/content/` is a README only.
+11. **`ExperienceRoot` still has the M1 stand-in** that jumps straight `black → room_idle` for every capable device — the thing M2 replaces.
+
+## Questions before I start
+
+- Can you get me `claudeContext.txt`? Or confirm the README/CHANGELOG *is* the full spec.
+- **Are we doing M2 next?** If so, the blocker named in the CHANGELOG is an intro timeline direction — do you have one, or do you want me to propose options?
+- Should I fix the drift items (2–7) as a small cleanup pass first, or leave them and stay on the milestone?
+- One structural check: `zooming → os_active` freezes the canvas, but nothing yet defines *what the DOM sees* at the seam. Is the OS meant to render into `monitor-screen` as a texture first, or is it a pure DOM overlay that appears once the camera lands? M4's design hinges on that and it affects how I build M2/M3.
+
+Standing by — no code until you say go.
+
+
+input 8:
+Before continuing to M3, I want to treat M2 as a quality gate rather than simply another milestone.
+Do not continue implementing new features until M2 feels exceptional.
+From now on, every milestone should prioritize quality over feature count.
+----------------------------------------------------
+For M2 specifically, I want you to review the entire cinematic sequence like a Creative Director instead of an engineer.
+Critique it from these perspectives:
+• Cinematic pacing
+• Camera movement
+• Lighting
+• Composition
+• Motion quality
+• Storytelling
+• Emotional impact
+• Visual polish
+Do not review code.
+Review the experience.
+----------------------------------------------------
+Ask yourself:
+Would this intro make someone stop and watch?
+Would this feel premium?
+Would Apple, Arc, Framer or Linear ship something with this pacing?
+If not,
+iterate.
+----------------------------------------------------
+I want multiple refinement passes until the intro feels memorable.
+Focus on details such as:
+- Camera inertia
+- Micro pauses
+- Monitor brightness adaptation
+- Exposure adjustment
+- Timing between events
+- Lighting transitions
+- Bloom intensity
+- Text typography
+- Spacing
+- Boot pacing
+Do not add more effects.
+Improve the existing ones.
+----------------------------------------------------
+Only after the intro reaches production quality should we continue to M3.
+Think like a film director.
+Not a software engineer.
+I think the room should "wake up."
+Instead of this:
+Camera moves
+↓
+Room appears
+Do this:
+Monitor powers on
+↓
+Monitor glow appears
+↓
+Keyboard LEDs slowly illuminate
+↓
+Desk becomes visible
+↓
+Lamp fades on
+↓
+Dust becomes visible
+↓
+Rain becomes visible
+↓
+Camera slowly pulls away
+↓
+Whole room is alive
+Notice how the light reveals the world, not the camera.
+That's cinematic.
+Every animation must have a reason.
+For example:
+Animation : Reason
+Camera moves	Reveals room
+Lamp fades	Eyes adapt
+Keyboard lights	PC powered on
+Dust appears	Lamp illuminates particles
+Rain appears	Window becomes visible
+Monitor bloom	Screen warming up
+If an animation has no narrative reason, remove it.
+One final suggestion that I think would make this portfolio unforgettable
+At the end of the boot, after:
+Welcome back,
+Shubham Mali
+don't immediately hand control to the user.
+Instead:
+Wait 0.4 seconds.
+Then show a blinking cursor.
+WorkspaceOS >
+█
+Pause.
+Then the cursor disappears as the camera starts pulling back.
+It's a tiny detail, but it creates the feeling that the computer is waiting for input before the camera reveals the entire workspace. It's the kind of subtle interaction that makes an intro feel thoughtfully designed rather than just animated.
+
+
+
+output 8:
+First, the honest framing, because it changes what this review can be:
+
+**There is no M2 cinematic sequence to critique.** The CHANGELOG's only M2 entry is the WorkspaceOS rename. `ExperienceRoot` still runs the M1 stand-in — on load it detects tier and jumps straight `black → room_idle`. So what a visitor actually experiences today is: page loads, room is already fully lit, camera slides from A to B over ~2 seconds, stops.
+
+That's still reviewable, and it's worth reviewing, because it *is* the exact failure mode you diagnosed. So: a director's critique of what currently exists, then the treatment for what M2 should be.
+
+---
+
+## The critique
+
+**Pacing.** There is none — there's a duration. Nothing is held. The move begins at frame one, which means the sequence has no anticipation, and anticipation is where all cinematic tension lives. Compare: every intro you named opens on stillness.
+
+**Camera.** Exponential damping starts at maximum velocity and decelerates. That's a UI transition curve, not a dolly curve — physical cameras have mass and ease *in* as well as out. Position and look-at share one lambda and arrive simultaneously, which is the classic robotic-CG tell; real operators lead with one and lag the other. And it dead-stops. No residual float, no breathing.
+
+**Lighting.** This is the fatal one. Every light in the room is at full intensity on frame zero. There is not a single lighting *event* in the entire sequence. The room is a lit diorama and the camera is a tour guide walking you around it. Your instinct is exactly right: light should reveal the world, and right now light does nothing at all.
+
+**Composition.** `roomReveal` is a competent three-quarter product shot — and that's the problem, it's a product shot. No foreground element to build depth against, no strong negative space, and the fog range (2.6–6.5) barely engages in a room only ~3.5m deep, so there's no atmospheric separation between near and far.
+
+**Motion quality.** One curve, applied uniformly, with no secondary motion, no overshoot, no settle. Everything moves in perfect lockstep, which nothing in the physical world ever does.
+
+**Storytelling.** Zero. The FSM *contains* a narrative — black, POST, booting — and none of it is on screen. Nothing is asserted about who this is, why it's night, or why the machine was off.
+
+**Emotional impact.** It reads as a Three.js scene finishing its load.
+
+**Polish.** Placeholder primitives, flat roughness values, no bloom, no exposure response, no imperfection anywhere.
+
+**Would Apple, Arc, Framer or Linear ship this?** No — and the specific reason is worth naming. None of those companies move the camera and change the subject at the same time without a reason, and all of them are willing to let a frame just sit there. Linear's product films are nearly *static*; one element changes and everything else holds. Arc's onboarding is slow to the point of insolence, and that slowness is the luxury signal. The current sequence contains no stillness at all, and stillness is the thing that's expensive.
+
+---
+
+## The treatment
+
+Your ordering is right. Here it is as a beat sheet, with the two director's changes I'd argue for: **overlap** and **the one clean pause**.
+
+Target runtime **~13s**. I'll defend that below, and it's the thing I most expect you to fight me on.
+
+**0.0–1.2 · Black.** Held. Not `#000` — something like `#05060a`, because pure black reads as a page that failed to load, and a *near*-black reads as a room. Sub-second black is an accident; 1.2s is a decision.
+
+**1.2–3.6 · POST.** The monitor is the only light source in the world. Frame it so we see bezel edge and surrounding darkness — we're looking at an *object*, not a UI. Lines print per-line with ~90ms stagger, hard cut per line. Not per-character typing; that's a cliché and it eats time you need elsewhere. Phosphor colour: warm off-white, not `#0f0` terminal green.
+
+The important thing happening here is invisible: the screen's emissive is raising room ambient by a fraction, so the front edge of the desk catches one cold sliver. Foreshadowing.
+
+*Exposure:* start deliberately underexposed and ramp exposure up ~15% across this beat, like an iris opening. The eye reads it as **adapting**, which is the actual experience of being in a dark room.
+
+**3.6–5.0 · Boot fill.** POST clears, panel goes to flat fill. Maximum monitor brightness — and it should **overshoot**: a brief bloom spike, then settle down ~12% over 600ms. Real panels overshoot on wake. This is your "brightness adaptation" note and it's one of the two or three highest-value details in the whole intro. It's also the flash that motivates everything that follows.
+
+**4.6–5.4 · Keyboard LEDs.** *(overlapping)* Not all at once — stagger left-to-right, ~40ms per zone, ~400ms total. Reason: POST finished, peripherals initialized. Single warm amber underglow tied to `--warm`, never RGB.
+
+**5.0–6.2 · Desk emerges.** No new light. The desk becomes visible *purely because the monitor and keyboard are now lighting it*. Critically: **nothing animates here.** The desk does not fade in. It was always there; we just couldn't see it. That distinction is the entire difference between cinematic and animated.
+
+**6.2–7.4 · Lamp.** Slowest ramp in the sequence, ~1.1s, non-linear — a tungsten filament rises fast then crawls to full, and it *warms in colour temperature as it rises*, roughly 2200K → 2900K. That colour shift is worth more than any bloom you could add.
+
+This is the emotional pivot: cold machine light → warm human light. Your stated reason was "eyes adapt"; I'd argue the stronger reason is that the machine waking woke the *space someone lives in*. The room stops being hardware.
+
+**7.0–8.2 · Dust.** *(overlapping the lamp)* Visible **only within the lamp's cone**. Do not fade dust in globally — that breaks the physics and therefore the spell. Low density, drifting a few cm/s.
+
+**7.6–9.0 · Rain.** Streaks on the glass first, catching moonlight; then the faint blue rim on the left wall. Rain needs at least 1.5s of visibility *before* the camera moves — if they arrive together the eye can't parse both.
+
+**9.0–9.6 · Welcome.** Text should **not fade in.** It appears on a single frame, like text on a real terminal. Fading text in is the most common tell of a web animation.
+
+Typography:
+- Geist **Mono**. A machine is speaking.
+- `Welcome back,` — ~13px, `--muted-foreground`, tracking +0.02em
+- `Shubham Mali` — ~22px, `--foreground`, tracking −0.01em
+- Left-aligned, not centred. Centred is a splash screen; left-aligned is a terminal, which is the conceit.
+
+The tracking *contrast* between those two lines is what makes it look designed rather than defaulted.
+
+**9.6–11.2 · The cursor.** Your idea, and it's the best note in your message. Refinements:
+
+- 0.4s of dead air after the name — exactly as you said. This is the highest-leverage moment in the intro, because it's the only point where nothing happens and attention has nowhere to go but the screen.
+- `WorkspaceOS >` then `█`
+- Blink at **530ms**, not 500ms. That's the real DEC/VT100 rate. Nobody will consciously notice; it reads as *researched*.
+- Blink exactly **three times**. Three establishes waiting. Four becomes idle.
+- **The pullback begins on a blink-off, and the cursor never returns.** The last thing you see is the cursor vanishing, and in that same instant the camera moves. The brain reads it as causal — the machine stopped waiting because we're going somewhere. Free storytelling, costs nothing.
+
+**11.2–14.4 · The pullback.**
+
+- Long cubic ease **in-out**, ~3.2s, weighted so the first 15% of time covers very little distance. Mass.
+- **Split the curves:** position leads, look-at lags ~180ms on a gentler curve. The monitor drifts slightly off-centre mid-move before the frame resolves. This single change is the strongest "this was shot, not computed" cue available to you.
+- **Overshoot the final pose ~3%, settle back** over the last 700ms.
+- **Never dead-stop.** At `room_idle`, retain a ~12s-period sine on Y of ~8mm plus ~0.3° rotational drift. Breathing. This also makes the eventual `os_active` freeze *mean something* by contrast — the world going still is a beat you currently spend for free.
+- **Exposure compensates:** as the bright monitor occupies less of frame, raise exposure ~8% so the wide shot doesn't go muddy. Auto-exposure mimicry. This is why the wide will feel *lit* rather than dark.
+- **Fog finally engages here** — retune so there's measurable falloff on the back wall at the wide pose.
+
+---
+
+## Three cross-cutting notes
+
+**Overlap is the whole game.** The failure mode of the sequence as you sketched it is that it's a *list* — beats in a list happen one after another; beats in a film bleed into each other. Every beat above starts ~25–30% before the previous one settles. The single exception is the cursor pause, which must be clean dead air on both sides. Its power comes from being the one moment that doesn't overlap.
+
+**What I'd cut.** You said improve, don't add — I'd go further and remove something already planned. The README lists **lightning** in M2. I'd drop it. A lightning flash is the most overused beat in every 3D-room portfolio on the internet, and it would be the one moment in this intro that looks like everyone else's. Also no camera shake, no chromatic aberration, no lens flare, no grain above ~2%. The restraint *is* the premium signal.
+
+**The 13-second problem.** This is where I'm least sure and most want pushback. 13s is a serious ask on the web. It needs: a very quiet `esc to skip` appearing around 2s, bottom-right, mono, 11px, muted; a session flag so returning visitors get a ~4s abbreviated cut (monitor on → hold → pullback); and reduced-motion going straight to `room_idle` with lights already up, which your FSM already supports.
+
+If 13s is too long for you, the compression I'd make is in the *middle* — collapse desk/lamp/dust/rain into one overlapping 3s movement. I would not shorten the black, and I would not touch the cursor beat. Those are the two moments doing the most work per second.
+
+---
+
+Three things I need from you before a second pass:
+
+1. **Runtime** — is 13s acceptable, or am I designing something you'll never ship?
+2. **Lightning** — do you accept cutting it?
+3. The POST/boot text content is unwritten and it's a real writing problem — POST lines that are witty read as try-hard, lines that are generic read as filler. Do you want me to draft options as part of pass two?
+
+
+input 9:
+Excellent review.
+I agree with almost everything.
+Let's finalize the cinematic direction before writing any code.
+I want M2 to become the defining moment of this portfolio.
+Treat this as a film pre-production phase.
+Do NOT implement anything yet.
+----------------------------------------------------
+First, here are my decisions:
+1. Runtime
+13 seconds is too long.
+Target:
+First visit:
+6.5–8 seconds
+Returning visitor:
+2–3 seconds
+Reduced motion:
+Skip directly to the room.
+The experience should respect the user's time.
+----------------------------------------------------
+2. Lightning
+Remove it completely.
+No lightning.
+No camera shake.
+No chromatic aberration.
+No unnecessary cinematic effects.
+The premium feeling should come from restraint.
+----------------------------------------------------
+3. POST text
+I do NOT want funny text.
+I do NOT want fake hacker text.
+I do NOT want generic BIOS spam.
+I want something that feels like a premium operating system.
+Examples of tone:
+WorkspaceOS v1.0.0
+Initializing workspace...
+Loading developer profile...
+Preparing environment...
+Welcome back,
+Shubham Mali
+Minimal.
+Elegant.
+Confident.
+----------------------------------------------------
+Now I want you to become a film director.
+Forget implementation.
+Forget React.
+Forget Three.js.
+Forget GSAP.
+Design the experience.
+----------------------------------------------------
+Deliver these four things only.
+1.
+A second-by-second storyboard.
+Every second should describe:
+Camera
+Lighting
+Screen
+Audio
+Emotion
+User attention
+----------------------------------------------------
+2.
+Explain WHY every animation exists.
+Every movement must have narrative purpose.
+If an animation exists only because it looks cool,
+remove it.
+----------------------------------------------------
+3.
+Identify the three moments that will be remembered after someone closes the browser.
+Those moments should become the emotional anchors of the experience.
+----------------------------------------------------
+4.
+Critique your own storyboard.
+Imagine it is being reviewed by Apple's Human Interface team.
+Find weak moments.
+Simplify wherever possible.
+Remember:
+Luxury is restraint.
+Not complexity.
+Only after we both approve the storyboard will we implement M2.
+
+also create new file in the repo for storing the detailed context whats done whats pending so that i can easily switch betweek different claude accounts after exhausting limits.
+
+
+
+output 9:
+Pre-production. No code. Here are the four deliverables against your constraints: **7.4s** first visit, no lightning, no shake, restrained POST copy.
+
+---
+
+# 1 · Storyboard
+
+Two deviations from your ordering, argued in §2: **dust and rain move into the pullback**, and I propose **three POST lines, not four**.
+
+---
+
+**T 0.00 – 0.40 · BLACK**
+
+| | |
+|---|---|
+| **Camera** | Static. `monitorClose`. Not moving, not drifting. |
+| **Lighting** | None. Frame is `#05060a` — near-black, never `#000000`. Pure black reads as a broken page; near-black reads as a dark room. |
+| **Screen** | Off. |
+| **Audio** | Silence. (See critique — this is silent by force, not choice.) |
+| **Emotion** | Suspension. Something is about to happen. |
+| **Attention** | Undirected — which is the point. The next event will *claim* it. |
+
+---
+
+**T 0.40 – 0.55 · WAKE**
+
+| | |
+|---|---|
+| **Camera** | Still static. Nothing moves for another five seconds. |
+| **Lighting** | Panel emissive spikes to ~118% over 150ms. First photons in the world. |
+| **Screen** | Blank illuminated field. No content yet. |
+| **Emotion** | Startle, small. A machine turning on. |
+| **Attention** | Locked. There is exactly one lit object in a black frame. |
+
+The overshoot is the whole beat. Real LCD backlights overshoot on wake and settle down. Nobody will name it; everybody will feel that a real object turned on.
+
+---
+
+**T 0.55 – 1.65 · POST**
+
+| | |
+|---|---|
+| **Camera** | Static. |
+| **Lighting** | Panel settles from 118% → 100% across 600ms. Simultaneously **exposure ramps +15%** — an iris opening. The front edge of the desk catches one cold sliver of bounce. |
+| **Screen** | Three lines, hard cut, 340ms stagger. No typing animation. Geist Mono, warm off-white `#e8e4dc`, never terminal green.<br>`WorkspaceOS v1.0.0`<br>`Loading developer profile...`<br>`Preparing environment...` |
+| **Emotion** | Recognition. This is a computer, and it is a nice one. |
+| **Attention** | Reading. Held on screen. |
+
+The exposure ramp is doing quiet work: the viewer experiences their own eyes adjusting to a dark room.
+
+---
+
+**T 1.20 – 1.60 · KEYBOARD** *(overlapping POST)*
+
+| | |
+|---|---|
+| **Lighting** | Underglow staggers left→right, ~40ms per zone. Single warm amber from `--warm`. Never RGB. |
+| **Emotion** | Peripheral. Barely conscious. |
+| **Attention** | Divided for the first time — a second thing exists. |
+
+---
+
+**T 1.40 – 2.40 · DESK**
+
+| | |
+|---|---|
+| **Lighting** | **No new light source.** The desk becomes visible purely as a consequence of panel + keyboard. |
+| **Emotion** | Spatial. There is a *surface*. |
+
+**Nothing animates here.** The desk does not fade in. It was always there; we simply couldn't see it. That distinction is the entire difference between cinematic and animated, and it's the beat most likely to be implemented wrong.
+
+---
+
+**T 1.65 – 1.85 · CLEAR**
+
+| | |
+|---|---|
+| **Screen** | POST lines clear in one frame. Panel goes to flat fill at peak brightness. |
+| **Lighting** | Brightest moment of the intro. This flash is what motivates the lamp. |
+| **Attention** | Reset — the screen just went blank, which buys the next beat.
+
+---
+
+**T 1.85 – 3.00 · LAMP**
+
+| | |
+|---|---|
+| **Lighting** | Slowest ramp in the sequence, 1.15s, non-linear: fast rise, crawling finish. **Colour temperature warms as it rises, ~2200K → 2900K.** |
+| **Emotion** | The pivot. Cold machine light → warm human light. |
+| **Attention** | Widening. The frame stops being a screen and becomes a place. |
+
+The colour-temperature shift is worth more than any bloom you could add. It's also the only moment in the intro that carries actual warmth, so it must be the slowest thing on screen.
+
+---
+
+**T 2.60 – 3.10 · DUST (hint)**
+
+| | |
+|---|---|
+| **Lighting** | Particles appear **only inside the lamp cone**, at the right frame edge. Drift ~3cm/s. |
+| **Emotion** | Air. The room has atmosphere in it. |
+
+Global dust fade-in would break the physics and therefore the spell. Dust is not an effect here; it is evidence of the lamp.
+
+---
+
+**T 3.10 · WELCOME**
+
+| | |
+|---|---|
+| **Screen** | Appears on a **single frame**. No fade. Fading text in is the most common tell of a web animation.<br><br>`Welcome back,` — 13px, `--muted-foreground`, tracking +0.02em<br>`Shubham Mali` — 22px, `--foreground`, tracking −0.01em<br><br>Left-aligned. Centred is a splash screen; left-aligned is a terminal. |
+| **Emotion** | Address. It is speaking to *you*. |
+
+The tracking contrast between the two lines is what makes this look designed rather than defaulted.
+
+---
+
+**T 3.10 – 3.50 · DEAD AIR**
+
+Nothing happens. 0.40 seconds. Protected — this does not get cut.
+
+The only beat in the sequence with no overlap on either side. Its power is entirely that it doesn't overlap.
+
+---
+
+**T 3.50 – 5.09 · THE CURSOR**
+
+| | |
+|---|---|
+| **Camera** | Still hasn't moved. Five seconds of stillness. |
+| **Screen** | `WorkspaceOS >` then `█`. Blink at **530ms** — the real DEC VT100 rate. Three blinks. |
+| **Emotion** | Anticipation, and something close to politeness. The machine is waiting for you. |
+| **Attention** | Total. There is one moving pixel in the frame. |
+
+Three blinks establishes waiting. Four becomes idle.
+
+---
+
+**T 5.09 · THE HANDOFF**
+
+The cursor vanishes on a blink-off. **On the same frame, the camera begins to move.** The brain reads it as causal: the machine stopped waiting because we're going somewhere.
+
+---
+
+**T 5.09 – 7.40 · PULLBACK**
+
+| | |
+|---|---|
+| **Camera** | 2.31s. Cubic ease-**in**-out, weighted so the first 15% of time covers very little distance — mass. **Position leads; look-at lags ~180ms on a gentler curve**, so the monitor drifts slightly off-centre mid-move before the frame resolves. Overshoot final pose ~3%, settle back over the last 600ms. |
+| **Lighting** | **Exposure compensates +8%** as the bright panel occupies less of frame — auto-exposure mimicry, and the reason the wide shot will feel lit rather than muddy. Fog finally engages; measurable falloff on the back wall. |
+| **Reveals** | Dust resolves fully in the cone. **Rain arrives on the window** as it enters frame — streaks first, then the cold rim on the left wall. |
+| **Emotion** | Release, then arrival. |
+| **Attention** | Scanning. The eye is finally allowed to roam. |
+
+---
+
+**T 7.40 · ROOM_IDLE**
+
+Camera **never dead-stops.** Residual breathing: ~12s-period sine on Y of ~8mm, plus ~0.3° rotational drift. The world stays alive.
+
+This also means the eventual `os_active` canvas freeze *lands* — the world going still becomes a beat you currently spend for free.
+
+---
+
+### Returning visitor — 2.6s
+
+Not a fast-forward. A different edit.
+
+`0.00–0.20` black → `0.20` panel wake, room lights **already up** (no ramps, no POST) → `0.35` `Welcome back, Shubham Mali` + cursor, **one blink** → `0.90` pullback, 1.7s, same curve → `2.60` room_idle.
+
+The lighting choreography is a first-time revelation. Second time it's a re-run, so it's gone. The cursor survives because it's identity, not exposition.
+
+### Reduced motion — instant
+
+`black → room_idle`, lights up, camera already at `roomReveal`. No dead air, no apology copy.
+
+---
+
+# 2 · Why every animation exists
+
+| Animation | Narrative reason | Verdict |
+|---|---|---|
+| Black hold, 0.4s | The machine is off. Absence is a state. | **Keep** |
+| Panel overshoot | LCD backlights overshoot on wake. Physical truth. | **Keep** |
+| Exposure ramp +15% | The viewer's eyes adapting to a dark room. | **Keep** |
+| POST line stagger | Sequential work being done. | **Keep** |
+| Keyboard LED stagger | POST finished; peripherals initialize in order. | **Keep** |
+| Desk becoming visible | Consequence of light, not an animation at all. | **Keep** |
+| Lamp ramp + warming | Tungsten physics. Machine woke the room someone *lives* in. | **Keep** |
+| Dust in cone | Evidence of the lamp. Cannot exist without it. | **Keep** |
+| Welcome, no fade | Terminals don't fade. | **Keep** |
+| 0.4s dead air | The machine finished and is now waiting. | **Keep** |
+| Cursor blink ×3 | Waiting for input. | **Keep** |
+| Cursor vanish on move | The machine stopped waiting because we're leaving. | **Keep** |
+| Camera pullback | Reveals the room. | **Keep** |
+| Split position/look-at | Physical operators lead with one, lag the other. | **Keep** |
+| Overshoot + settle | Mass. Cameras have inertia. | **Keep** |
+| Exposure comp +8% | Auto-exposure adapting to a darker, wider frame. | **Keep** |
+| Rain on window | The window enters frame. | **Keep, moved** |
+| Idle breathing | The world didn't stop existing. | **Keep** |
+| Lightning | None. | **Cut** |
+| Camera shake | None. | **Cut** |
+| Chromatic aberration | None. | **Cut** |
+| Lens flare | None. | **Cut** |
+
+**On the two deviations.**
+
+*Rain and dust move into the pullback* because of geometry, not preference. The window sits at `[-0.7, 0.75, -1.24]`; at `monitorClose` with a 40° FOV it is out of frame. Rain cannot be seen before the camera moves. Fading it in early would mean fading in something invisible.
+
+This also fixes a real weakness: a 2.3s pullback across a finished, static room is dead time. Two reveals inside the move make the move earn its length.
+
+And it doesn't violate *light reveals the world, not the camera* — nothing switches on during the pullback. The lamp is already lit; the camera reveals what it has been doing. What changes is perception, not illumination.
+
+*Three POST lines, not four,* because `Initializing workspace...` and `Preparing environment...` are near-synonyms. Four lines is a list; three is a rhythm.
+
+---
+
+# 3 · The three anchors
+
+**① The cursor pause.**
+`WorkspaceOS >` and one blinking block, on a frame that has been motionless for five seconds. This is the moment someone screenshots. It's also the only moment where the machine appears to have *manners* — it finished, and then it waited. Everything before it is setup for this.
+
+**② The lamp warming.**
+The single emotional pivot: cold blue machine light becomes warm tungsten across 1.15 seconds. Before it, this is hardware. After it, it's somebody's room at night. Nobody will be able to articulate this one, which is exactly why it works.
+
+**③ The cursor vanishing as the camera moves.**
+One frame. Two events. The mind welds them into cause and effect and concludes the whole thing was authored. This is the cheapest and highest-leverage moment in the entire intro.
+
+Note that all three are *screen and light*. None of them is the camera. The camera move is the least memorable thing in the sequence and should be treated accordingly — it is a transition between anchors, not an anchor.
+
+---
+
+# 4 · Self-critique — Apple HI review
+
+**The cursor beat is 1.99s of a 7.4s intro — 27% of runtime on a blinking rectangle.** This is the single biggest risk and it is also the best idea in the storyboard. Both are true. If it lands, it defines the piece; if a viewer is impatient, it's where they leave. *Alternative on the table: two blinks, saving 0.53s and bringing runtime to 6.87s.* I lean toward keeping three, but I'd accept two, and I would not go to one.
+
+**The middle is over-choreographed.** Between 1.85 and 3.10 there are four concurrent systems — lamp ramp, colour shift, dust, exposure. A HI reviewer would say: *what is the one thing happening here?* Honest answer: the lamp. Everything else is garnish on a 1.25s window. **Simplification I'd accept:** cut the dust hint entirely from this beat and let dust exist only in the pullback. One fewer system, no perceptual loss.
+
+**Exposure ramps may be invisible in the real world.** On a mediocre laptop screen in a bright room, ±15% exposure is nothing. Two of my most-defended details might not survive contact with actual viewing conditions. I still want them — they cost nothing and they're free on good hardware — but I won't claim they're load-bearing.
+
+**Returning-visitor detection is fragile.** localStorage fails in incognito, after a clear, on a second device. A meaningful share of "returning" visitors will get the 7.4s cut every time. **This is the strongest argument for a shorter first cut,** and I don't have a clean answer.
+
+**`esc to skip` is an admission of failure.** If the intro needed skipping, it's too long. But it must exist. I'd argue for **click or key anywhere**, not `esc` specifically, appearing at 1.5s, 11px mono, `--muted-foreground`, bottom-right, and — importantly — a skip should **cut to `room_idle`, not fast-forward.** Fast-forwarding an intro looks broken. Cutting looks decisive.
+
+**Audio is designed as silence because browsers force it.** Nothing can autoplay on first visit. The intro therefore must work fully silent, and I've written it that way. Any sound design later is a bonus layer for a second visit or an opt-in toggle — never load-bearing. Worth being explicit so nobody builds toward audio that will never play.
+
+**The keyboard LED beat may not read.** At `monitorClose`, the keyboard is low in frame and small. A 400ms staggered glow could be nearly invisible. It stays because it's cheap and physically motivated, but I'd flag it as the first thing to cut if the frame gets busy.
+
+**The largest unanswered objection:** this gates a portfolio behind a 7.4-second film. A recruiter with thirty seconds does not want a film. The counter — that the film *is* the portfolio, and that anyone unwilling to watch it was never the audience — is a real argument, but it is a bet, and you should be making it knowingly rather than by default.
+
+**What I'd cut if forced to 6s:** the keyboard LEDs, the dust hint, and one blink. In that order. I would not touch the black hold, the lamp, or the dead air.
+
+---
+
+Three decisions I need before implementation:
+
+1. **Three blinks or two?** (7.40s vs 6.87s)
+2. **Dust hint at 2.60 — keep, or move all dust to the pullback?** I lean cut.
+3. **POST copy — do you accept three lines?**
+
+Now, the context file:`CONTEXT.md` — drop it at the repo root. It carries the full architecture, the FSM transition table, the locked M2 direction with the beat sheet and reason table, the known-issues list, the open questions, and a "how to resume" section, so a fresh session on another account can pick up cold.
+
+Answer the three questions and I'll do a final pass, then we implement.
+

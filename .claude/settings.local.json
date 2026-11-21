@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vitest *)",
+      "Bash(npm run *)",
+      "Bash(node -e \"try{require.resolve\\('playwright'\\)}catch\\(e\\){console.log\\('no playwright'\\)}\")",
+      "Bash(node -e \"try{require.resolve\\('puppeteer'\\)}catch\\(e\\){console.log\\('no puppeteer'\\)}\")",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/ --max-time 2)",
+      "Bash(awk '{print $1}')",
+      "Bash(xargs -r kill)",
+      "Bash(npx prettier *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3001/)",
+      "Bash(pkill -f \"next-server\\\\|next dev\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3001/ --max-time 2)",
+      "Bash(netstat -ltnp)",
+      "Bash(kill 40067 33235)",
+      "Bash(\\\\? §[0-9]\" CONTEXT.md)",
+      "Bash(grep -n \"DESIGN_PHILOSOPHY.md`\\\\? §[0-9]\" CONTEXT.md)",
+      "Bash(grep -n 'DESIGN_PHILOSOPHY[.]md.\\\\{0,2\\\\}§[0-9]' /home/shubham/Personal/workspace-os-m1/CONTEXT.md)",
+      "Bash(python3 *)"
+    ]
+  }
+}
