@@ -451,7 +451,7 @@ projects, certifications, skills, links.
 - **Headline copy** — "I build the part of the product that decides who gets
   in.", the gallery's intro paragraph and captions, and the mug facts — were
   written for him; edit to taste.
-- **Both albums have real photos** — Rides nine (plates blurred), Gym five —
+- **Both albums have real photos** — Rides twelve (plates blurred), Gym five —
   with captions written from the photos: the owner should check them. Real
   photos:
   drop into `public/gallery/`, set `src` (and `album`: `rides` or `gym`) in

@@ -38,7 +38,7 @@ renders the model in place of its placeholder, inheriting the exact transform.
 ## Photos
 
 - **Gallery:** `public/gallery/*.jpg` — real photos in both albums: Rides
-  (`ride-01…09.jpg`) and Gym (`gym-01…05.jpg`). An entry without `src` falls
+  (`ride-01…12.jpg`) and Gym (`gym-01…05.jpg`). An entry without `src` falls
   back to generated placeholder art.
 - **Favicon / OG image:** still missing (`public/` has no images yet).
 

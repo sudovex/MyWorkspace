@@ -2,6 +2,14 @@
 
 All notable changes per milestone.
 
+## Three more rides (Nov 2026)
+
+### Added
+- Three riding-POV shots in the Rides album (`ride-10…12.jpg`: "Hairpin",
+  "Golden hour hairpin", "Open road"), 3:4, 900×1200. No number plates are
+  readable in them, so nothing was blurred. Rides now has twelve photos; at
+  four columns that is three per column, all shown tall.
+
 ## GitHub Pages deployment (Nov 2026)
 
 ### Added
